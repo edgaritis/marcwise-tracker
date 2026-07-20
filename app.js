@@ -48,7 +48,8 @@
   function migratePost(p) {
     const out = { ...p };
     if (typeof out.status === 'undefined') out.status = out.published ? 'published' : 'draft';
-    if (typeof out.destinations === 'undefined' || out.destinations === null) out.destinations = { page: out.destination === 'page', group: out.destination === 'group' };
+    if (typeof out.destinations === 'undefined' || out.destinations === null) out.destinations = { page: out.destination === 'page', group: out.destination === 'group', ig: false };
+    if (typeof out.destinations.ig === 'undefined') out.destinations.ig = false;
     if (typeof out.formats === 'undefined' || out.formats === null) out.formats = { image: out.format === 'image', reels: out.format === 'reels' };
     if (typeof out.source === 'undefined') out.source = '';
     if (!out.id) out.id = uid();
@@ -179,12 +180,13 @@
       if (arr.length === 1) { result.push(arr[0]); continue; }
       mergedGroups++; removed += arr.length - 1;
       const winner = arr.slice().sort((a, b) => statusRank(b.status) - statusRank(a.status) || String(a.id).localeCompare(String(b.id)))[0];
-      const f = { image: false, reels: false }, d = { page: false, group: false }, sources = new Set();
+      const f = { image: false, reels: false }, d = { page: false, group: false, ig: false }, sources = new Set();
       for (const p of arr) {
         if ((p.formats || {}).image) f.image = true;
         if ((p.formats || {}).reels) f.reels = true;
         if ((p.destinations || {}).page) d.page = true;
         if ((p.destinations || {}).group) d.group = true;
+        if ((p.destinations || {}).ig) d.ig = true;
         if (p.source) sources.add(p.source);
       }
       result.push({ ...winner, formats: f, destinations: d, source: Array.from(sources).join(' + ') });
@@ -206,7 +208,7 @@
     const [loading, setLoading] = useState(false);
     const [modal, setModal] = useState(null); // 'pick' | 'new' | 'defaults' | 'saveView' | 'help' | 'importMd' | null
     const [pickId, setPickId] = useState(null);
-    const [newForm, setNewForm] = useState({ category: '3points', title: '', image: true, reels: false, page: true, group: false });
+    const [newForm, setNewForm] = useState({ category: '3points', title: '', image: true, reels: false, page: true, group: false, ig: true });
     const [viewName, setViewName] = useState('');
     const [mdPreview, setMdPreview] = useState(null);
     const [dragActive, setDragActive] = useState(false);
@@ -496,8 +498,9 @@
         const d = p.destinations || {};
         if (filters.destination === 'page' && !d.page) return false;
         if (filters.destination === 'group' && !d.group) return false;
+        if (filters.destination === 'ig' && !d.ig) return false;
         if (filters.destination === 'both' && !(d.page && d.group)) return false;
-        if (filters.destination === 'none' && (d.page || d.group)) return false;
+        if (filters.destination === 'none' && (d.page || d.group || d.ig)) return false;
         if (filters.dupOnly) {
           const k = p.category + '|' + normTitle(p.title);
           if ((dupMap[k] || 0) < 2) return false;
@@ -505,7 +508,7 @@
         if (filters.starredOnly && !p.starred) return false;
         if (filters.pinnedOnly && !p.pinned) return false;
         if (q) {
-          const hay = (p.title + ' ' + (p.category || '') + ' ' + (p.source || '')).toLowerCase();
+          const hay = (p.title + ' ' + (p.category || '') + ' ' + (p.source || '') + ' ' + (p.body || '') + ' ' + (p.caption || '') + ' ' + (p.closer || '') + ' ' + (p.attribution || '')).toLowerCase();
           if (!hay.includes(q)) return false;
         }
         return true;
@@ -537,6 +540,7 @@
       const reelsCount = posts.filter(p => (p.formats || {}).reels).length;
       const pageCount = posts.filter(p => (p.destinations || {}).page).length;
       const groupCount = posts.filter(p => (p.destinations || {}).group).length;
+      const igCount = posts.filter(p => (p.destinations || {}).ig).length;
       return [
         { label: 'Total',     value: total,       unit: 'posts',  color: '#1a4a3a' },
         { label: 'Next',      value: nextCount,   unit: 'queued', color: '#3d5c8a' },
@@ -548,6 +552,7 @@
         { label: 'Reels',     value: reelsCount,  unit: 'video',  color: '#7a3fbf' },
         { label: 'For Page',  value: pageCount,   unit: 'fb pg',  color: '#3d7a5c' },
         { label: 'For Group', value: groupCount,  unit: 'fb gp',  color: '#c97a3f' },
+        { label: 'For IG',    value: igCount,     unit: 'insta',  color: '#b83280' },
       ];
     }, [posts]);
 
@@ -656,10 +661,11 @@
         reels: formats ? !!formats.reels : (prev ? prev.reels : false),
         page:  d.page  !== undefined ? !!d.page  : (prev ? prev.page  : true),
         group: d.group !== undefined ? !!d.group : (prev ? prev.group : false),
+        ig:    d.ig    !== undefined ? !!d.ig    : (prev ? prev.ig    : true),
       };
     };
     const openNew = () => {
-      const seeded = defaultsToForm('lists', { category: 'lists', title: '', image: true, reels: false, page: true, group: false });
+      const seeded = defaultsToForm('lists', { category: 'lists', title: '', image: true, reels: false, page: true, group: false, ig: true });
       setNewForm({ ...seeded, title: '' });
       setModal('new');
       setTimeout(() => { const el = document.getElementById('ct_new_title'); if (el) el.focus(); }, 30);
@@ -672,7 +678,7 @@
         category: newForm.category,
         title: t,
         formats: { image: !!newForm.image, reels: !!newForm.reels },
-        destinations: { page: !!newForm.page, group: !!newForm.group },
+        destinations: { page: !!newForm.page, group: !!newForm.group, ig: !!newForm.ig },
         status: 'draft',
         source: 'manual',
       };
@@ -704,7 +710,7 @@
 
     // ----- Defaults -----
     const setDefault = (cat, patch) => {
-      setDefaults(curr => ({ ...curr, [cat]: { ...(curr[cat] || { formats: { image: true, reels: false }, page: true, group: false }), ...patch } }));
+      setDefaults(curr => ({ ...curr, [cat]: { ...(curr[cat] || { formats: { image: true, reels: false }, page: true, group: false, ig: true }), ...patch } }));
     };
     const applyDefaultsToDrafts = () => {
       let count = 0;
@@ -717,7 +723,7 @@
         return {
           ...p,
           formats: { image: !!formats.image, reels: !!formats.reels },
-          destinations: { page: !!d.page, group: !!d.group },
+          destinations: { page: !!d.page, group: !!d.group, ig: d.ig !== undefined ? !!d.ig : true },
         };
       });
       if (count === 0) { alert('No drafts matched any category with defaults set.'); return; }
@@ -736,7 +742,7 @@
     // ----- CSV / JSON export ----
     const exportCsv = () => {
       const rows = filtered;
-      const header = ['#', 'Category', 'Title', 'Image', 'Reels', 'Page', 'Group', 'Status', 'Source'];
+      const header = ['#', 'Category', 'Title', 'Image', 'Reels', 'Page', 'Group', 'IG', 'Status', 'Source'];
       const lines = [header.join(',')];
       rows.forEach((p, i) => {
         const d = p.destinations || {};
@@ -749,6 +755,7 @@
           f.reels ? 'yes' : 'no',
           d.page ? 'yes' : 'no',
           d.group ? 'yes' : 'no',
+          d.ig ? 'yes' : 'no',
           csvEscape(p.status || 'draft'),
           csvEscape(p.source || ''),
         ].join(','));
@@ -831,7 +838,7 @@
           sourceRef: s.sourceRef || '',
           preset: s.preset || '',
           formats: { image: !!formats.image, reels: !!formats.reels },
-          destinations: { page: !!d.page, group: !!d.group },
+          destinations: { page: !!d.page, group: !!d.group, ig: d.ig !== undefined ? !!d.ig : true },
           status: 'draft',
           pinned: false,
           starred: false,
@@ -870,7 +877,7 @@
     const pinnedPost = posts.find(p => p.pinned) || null;
     const starredCount = posts.filter(p => p.starred).length;
     return html`
-      ${PickModal({ open: modal === 'pick', post: pickPost, close: () => setModal(null), publish: () => pickAct('published'), schedule: () => pickAct('scheduled'), reject: () => pickAct('rejected'), skip: pickSkip, toggleImage: () => updatePost(pickId, { formats: { ...(pickPost && pickPost.formats || {}), image: !((pickPost && pickPost.formats || {}).image) } }), toggleReels: () => updatePost(pickId, { formats: { ...(pickPost && pickPost.formats || {}), reels: !((pickPost && pickPost.formats || {}).reels) } }), togglePage: () => updatePost(pickId, { destinations: { ...(pickPost && pickPost.destinations || {}), page: !((pickPost && pickPost.destinations || {}).page) } }), toggleGroup: () => updatePost(pickId, { destinations: { ...(pickPost && pickPost.destinations || {}), group: !((pickPost && pickPost.destinations || {}).group) } }), resetAndPick: () => { resetFilters(); setTimeout(() => setPickId(randomDraftId()), 50); }, draftCount: posts.filter(p => (p.status || 'draft') === 'draft').length })}
+      ${PickModal({ open: modal === 'pick', post: pickPost, close: () => setModal(null), publish: () => pickAct('published'), schedule: () => pickAct('scheduled'), reject: () => pickAct('rejected'), skip: pickSkip, toggleImage: () => updatePost(pickId, { formats: { ...(pickPost && pickPost.formats || {}), image: !((pickPost && pickPost.formats || {}).image) } }), toggleReels: () => updatePost(pickId, { formats: { ...(pickPost && pickPost.formats || {}), reels: !((pickPost && pickPost.formats || {}).reels) } }), togglePage: () => updatePost(pickId, { destinations: { ...(pickPost && pickPost.destinations || {}), page: !((pickPost && pickPost.destinations || {}).page) } }), toggleGroup: () => updatePost(pickId, { destinations: { ...(pickPost && pickPost.destinations || {}), group: !((pickPost && pickPost.destinations || {}).group) } }), toggleIg: () => updatePost(pickId, { destinations: { ...(pickPost && pickPost.destinations || {}), ig: !((pickPost && pickPost.destinations || {}).ig) } }), resetAndPick: () => { resetFilters(); setTimeout(() => setPickId(randomDraftId()), 50); }, draftCount: posts.filter(p => (p.status || 'draft') === 'draft').length })}
       ${AuthModal({ open: showAuth, close: () => { setShowAuth(false); resetAuthStage(); }, auth, syncStatus, email: authEmail, setEmail: setAuthEmail, code: authCode, setCode: setAuthCode, stage: authStage, msg: authMsg, signIn: startSignIn, verify: verifyCode, back: resetAuthStage, signOut: doSignOut, manualSync })}
       ${MergeChoiceModal({ open: !!mergeChoice, choice: mergeChoice, acceptCloud, acceptLocal })}
       ${NewModal({ open: modal === 'new', close: () => setModal(null), form: newForm, setForm: setNewForm, submit: submitNew, defaultsToForm })}
@@ -940,7 +947,7 @@
         </div>
 
         <!-- Stats -->
-        <div class="ct_stats" style="display: grid; grid-template-columns: repeat(10, 1fr); gap: 1px; background: #dfd9c9; border: 1px solid #dfd9c9; border-radius: 8px; overflow: hidden; margin-bottom: 22px;">
+        <div class="ct_stats" style="display: grid; grid-template-columns: repeat(11, 1fr); gap: 1px; background: #dfd9c9; border: 1px solid #dfd9c9; border-radius: 8px; overflow: hidden; margin-bottom: 22px;">
           ${stats.map(s => html`
             <div style="background: #fff; padding: 14px 16px;">
               <div style="font-size: 10px; font-weight: 600; letter-spacing: 0.12em; color: #8a9188; text-transform: uppercase; margin-bottom: 6px;">${s.label}</div>
@@ -994,7 +1001,7 @@
             <option value="all">All formats</option><option value="image">Image</option><option value="reels">Reels</option><option value="both">Image + Reels</option><option value="none">No format set</option>
           </select>
           <select value=${filters.destination} onChange=${e => { setFilters(f => ({ ...f, destination: e.target.value })); setPage(0); }} style="padding: 6px 10px; font-size: 12px; font-weight: 500; color: #1a4a3a; background: #f5f3ec; border: 1px solid #dfd9c9; border-radius: 5px;">
-            <option value="all">All destinations</option><option value="page">For FB Page</option><option value="group">For FB Group</option><option value="both">For both</option><option value="none">No destination</option>
+            <option value="all">All destinations</option><option value="page">For FB Page</option><option value="group">For FB Group</option><option value="ig">For Instagram</option><option value="both">For both</option><option value="none">No destination</option>
           </select>
           <label style="display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 11px; font-weight: 600; color: #1a4a3a; background: #f5f3ec; border: 1px solid #dfd9c9; border-radius: 5px; cursor: pointer;">
             <input type="checkbox" checked=${filters.dupOnly} onChange=${e => { setFilters(f => ({ ...f, dupOnly: e.target.checked })); setPage(0); }} style="cursor: pointer; width: 13px; height: 13px; accent-color: #c2682a;" />
@@ -1031,6 +1038,7 @@
             <div style="height: 16px; width: 1px; background: #5f7a6b;"></div>
             <button onClick=${() => bulkUpdate(p => ({ ...p, destinations: { ...(p.destinations || {}), page: true } }))} style="padding: 5px 10px; font-size: 11px; font-weight: 600; color: #fff; background: transparent; border: 1px solid #5f7a6b; border-radius: 4px; cursor: pointer; letter-spacing: 0.04em;">+ Page</button>
             <button onClick=${() => bulkUpdate(p => ({ ...p, destinations: { ...(p.destinations || {}), group: true } }))} style="padding: 5px 10px; font-size: 11px; font-weight: 600; color: #fff; background: transparent; border: 1px solid #5f7a6b; border-radius: 4px; cursor: pointer; letter-spacing: 0.04em;">+ Group</button>
+            <button onClick=${() => bulkUpdate(p => ({ ...p, destinations: { ...(p.destinations || {}), ig: true } }))} style="padding: 5px 10px; font-size: 11px; font-weight: 600; color: #fff; background: transparent; border: 1px solid #5f7a6b; border-radius: 4px; cursor: pointer; letter-spacing: 0.04em;">+ IG</button>
             <button onClick=${() => bulkUpdate(p => ({ ...p, formats: { ...(p.formats || {}), image: true } }))} style="padding: 5px 10px; font-size: 11px; font-weight: 600; color: #fff; background: transparent; border: 1px solid #5f7a6b; border-radius: 4px; cursor: pointer; letter-spacing: 0.04em;">+ Image</button>
             <button onClick=${() => bulkUpdate(p => ({ ...p, formats: { ...(p.formats || {}), reels: true } }))} style="padding: 5px 10px; font-size: 11px; font-weight: 600; color: #fff; background: transparent; border: 1px solid #5f7a6b; border-radius: 4px; cursor: pointer; letter-spacing: 0.04em;">+ Reels</button>
             <div style="height: 16px; width: 1px; background: #5f7a6b;"></div>
@@ -1166,6 +1174,10 @@
             <input type="checkbox" checked=${!!d.group} onChange=${() => updatePost(p.id, { destinations: { ...d, group: !d.group } })} style="cursor: pointer; width: 12px; height: 12px; accent-color: #c97a3f; margin: 0;" />
             FB Group
           </label>
+          <label style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; font-size: 11px; font-weight: 600; color: ${d.ig ? '#b83280' : '#9aa6b8'}; background: ${d.ig ? '#fbe9f2' : '#f7f9fc'}; border: 1px solid ${d.ig ? '#f3cadb' : '#e3e8ef'}; border-radius: 4px; cursor: pointer; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.04em;">
+            <input type="checkbox" checked=${!!d.ig} onChange=${() => updatePost(p.id, { destinations: { ...d, ig: !d.ig } })} style="cursor: pointer; width: 12px; height: 12px; accent-color: #b83280; margin: 0;" />
+            Instagram
+          </label>
         </div>
         <div style="padding: 0 8px;">
           <div style="display: inline-flex; padding: 2px; background: #f5f3ec; border: 1px solid #dfd9c9; border-radius: 5px; gap: 1px;">
@@ -1205,7 +1217,7 @@
     `;
   }
 
-  function PickModal({ open, post, close, publish, schedule, reject, skip, toggleImage, toggleReels, togglePage, toggleGroup, resetAndPick, draftCount }) {
+  function PickModal({ open, post, close, publish, schedule, reject, skip, toggleImage, toggleReels, togglePage, toggleGroup, toggleIg, resetAndPick, draftCount }) {
     if (!open) return null;
     return ModalShell({ open, close, maxWidth: 640, title: html`PICK A DRAFT <span style="color: #a5b0a5; font-family: 'JetBrains Mono', monospace; font-weight: 400; margin-left: 8px;">${draftCount} drafts</span>`, children: !post ? html`
       <div style="padding: 50px 28px; text-align: center;">
@@ -1252,6 +1264,10 @@
                 <label style="display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; font-size: 12px; font-weight: 600; color: ${d.group ? '#9a6d1f' : '#9aa6b8'}; background: ${d.group ? '#fbf1d8' : '#f7f9fc'}; border: 1px solid ${d.group ? '#f1dba0' : '#e3e8ef'}; border-radius: 4px; cursor: pointer; font-family: 'JetBrains Mono', monospace;">
                   <input type="checkbox" checked=${!!d.group} onChange=${toggleGroup} style="width: 13px; height: 13px; accent-color: #c97a3f; margin: 0;" />
                   FB Group
+                </label>
+                <label style="display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; font-size: 12px; font-weight: 600; color: ${d.ig ? '#b83280' : '#9aa6b8'}; background: ${d.ig ? '#fbe9f2' : '#f7f9fc'}; border: 1px solid ${d.ig ? '#f3cadb' : '#e3e8ef'}; border-radius: 4px; cursor: pointer; font-family: 'JetBrains Mono', monospace;">
+                  <input type="checkbox" checked=${!!d.ig} onChange=${toggleIg} style="width: 13px; height: 13px; accent-color: #b83280; margin: 0;" />
+                  Instagram
                 </label>
               </div>
             </div>
@@ -1308,6 +1324,10 @@
                 <input type="checkbox" checked=${form.group} onChange=${e => setForm({ ...form, group: e.target.checked })} style="width: 13px; height: 13px; accent-color: #c97a3f; margin: 0;" />
                 FB Group
               </label>
+              <label style="display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; font-size: 12px; font-weight: 600; color: #1a4a3a; background: #f5f3ec; border: 1px solid #dfd9c9; border-radius: 4px; cursor: pointer; font-family: 'JetBrains Mono', monospace;">
+                <input type="checkbox" checked=${form.ig} onChange=${e => setForm({ ...form, ig: e.target.checked })} style="width: 13px; height: 13px; accent-color: #b83280; margin: 0;" />
+                Instagram
+              </label>
             </div>
           </div>
         </div>
@@ -1356,6 +1376,10 @@
                 <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: #1a4a3a; cursor: pointer;">
                   <input type="checkbox" checked=${!!raw.group} onChange=${e => setDefault(cat, { group: e.target.checked })} style="width: 13px; height: 13px; accent-color: #c97a3f; margin: 0;" >
                   Group
+                </label>
+                <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: #1a4a3a; cursor: pointer;">
+                  <input type="checkbox" checked=${!!raw.ig} onChange=${e => setDefault(cat, { ig: e.target.checked })} style="width: 13px; height: 13px; accent-color: #b83280; margin: 0;" >
+                  IG
                 </label>
               </div>
             </div>
@@ -1481,7 +1505,7 @@
             </div>
             <div>
               <div style="${kvLabel}">Destinations</div>
-              <div style="font-size: 12px; color: #1a4a3a;">${(post.destinations || {}).page ? 'FB Page' : ''}${((post.destinations || {}).page && (post.destinations || {}).group) ? ' · ' : ''}${(post.destinations || {}).group ? 'FB Group' : ''}${!((post.destinations || {}).page || (post.destinations || {}).group) ? '—' : ''}</div>
+              <div style="font-size: 12px; color: #1a4a3a;">${[((post.destinations||{}).page?'FB Page':null),((post.destinations||{}).group?'FB Group':null),((post.destinations||{}).ig?'Instagram':null)].filter(Boolean).join(' · ') || '—'}</div>
             </div>
             ${post.preset ? html`
               <div>
