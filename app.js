@@ -44,7 +44,7 @@
 
   // ---------------- Helpers ----------------
   function normTitle(t) { return (t || '').toLowerCase().replace(/[^a-z0-9áéíóúüñ ]/gi, '').replace(/\s+/g, ' ').trim(); }
-  function statusRank(s) { return { published: 4, scheduled: 3, draft: 2, rejected: 1 }[s || 'draft'] || 0; }
+  function statusRank(s) { return { published: 5, scheduled: 4, next: 3, draft: 2, rejected: 1 }[s || 'draft'] || 0; }
   function uid() { return 'p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7); }
   function migratePost(p) {
     const out = { ...p };
@@ -504,6 +504,7 @@
     const stats = useMemo(() => {
       const total = posts.length;
       const drafts = posts.filter(p => (p.status || 'draft') === 'draft').length;
+      const nextCount = posts.filter(p => (p.status || 'draft') === 'next').length;
       const scheduled = posts.filter(p => (p.status || 'draft') === 'scheduled').length;
       const published = posts.filter(p => (p.status || 'draft') === 'published').length;
       const rejected = posts.filter(p => (p.status || 'draft') === 'rejected').length;
@@ -513,6 +514,7 @@
       const groupCount = posts.filter(p => (p.destinations || {}).group).length;
       return [
         { label: 'Total',     value: total,       unit: 'posts',  color: '#1a4a3a' },
+        { label: 'Next',      value: nextCount,   unit: 'queued', color: '#3d5c8a' },
         { label: 'Drafts',    value: drafts,      unit: 'todo',   color: '#5a6470' },
         { label: 'Scheduled', value: scheduled,   unit: 'queue',  color: '#9a6d1f' },
         { label: 'Published', value: published,   unit: 'live',   color: '#2d7a4a' },
@@ -902,7 +904,7 @@
         </div>
 
         <!-- Stats -->
-        <div class="ct_stats" style="display: grid; grid-template-columns: repeat(9, 1fr); gap: 1px; background: #dfd9c9; border: 1px solid #dfd9c9; border-radius: 8px; overflow: hidden; margin-bottom: 22px;">
+        <div class="ct_stats" style="display: grid; grid-template-columns: repeat(10, 1fr); gap: 1px; background: #dfd9c9; border: 1px solid #dfd9c9; border-radius: 8px; overflow: hidden; margin-bottom: 22px;">
           ${stats.map(s => html`
             <div style="background: #fff; padding: 14px 16px;">
               <div style="font-size: 10px; font-weight: 600; letter-spacing: 0.12em; color: #8a9188; text-transform: uppercase; margin-bottom: 6px;">${s.label}</div>
@@ -946,7 +948,7 @@
           </div>
 
           <select value=${filters.status} onChange=${e => { setFilters(f => ({ ...f, status: e.target.value })); setPage(0); }} style="padding: 6px 10px; font-size: 12px; font-weight: 500; color: #1a4a3a; background: #f5f3ec; border: 1px solid #dfd9c9; border-radius: 5px;">
-            <option value="all">All status</option><option value="draft">Draft</option><option value="scheduled">Scheduled</option><option value="published">Published</option><option value="rejected">Rejected</option>
+            <option value="all">All status</option><option value="next">Next</option><option value="draft">Draft</option><option value="scheduled">Scheduled</option><option value="published">Published</option><option value="rejected">Rejected</option>
           </select>
           <select value=${filters.category} onChange=${e => { setFilters(f => ({ ...f, category: e.target.value })); setPage(0); }} style="padding: 6px 10px; font-size: 12px; font-weight: 500; color: #1a4a3a; background: #f5f3ec; border: 1px solid #dfd9c9; border-radius: 5px;">
             <option value="all">All categories</option>
@@ -987,6 +989,7 @@
             <div style="height: 16px; width: 1px; background: #5f7a6b;"></div>
             <button onClick=${() => bulkUpdate(p => ({ ...p, status: 'published' }))} style="padding: 5px 12px; font-size: 11px; font-weight: 700; color: #1a4a3a; background: #7dd3a4; border: none; border-radius: 4px; cursor: pointer; letter-spacing: 0.04em;">MARK PUBLISHED</button>
             <button onClick=${() => bulkUpdate(p => ({ ...p, status: 'scheduled' }))} style="padding: 5px 12px; font-size: 11px; font-weight: 700; color: #1a4a3a; background: #e8b04a; border: none; border-radius: 4px; cursor: pointer; letter-spacing: 0.04em;">MARK SCHEDULED</button>
+            <button onClick=${() => bulkUpdate(p => ({ ...p, status: 'next' }))} style="padding: 5px 12px; font-size: 11px; font-weight: 700; color: #fff; background: #3d5c8a; border: none; border-radius: 4px; cursor: pointer; letter-spacing: 0.04em;">MARK NEXT</button>
             <button onClick=${() => bulkUpdate(p => ({ ...p, status: 'rejected' }))} style="padding: 5px 12px; font-size: 11px; font-weight: 700; color: #fff; background: #c44545; border: none; border-radius: 4px; cursor: pointer; letter-spacing: 0.04em;">MARK REJECTED</button>
             <button onClick=${() => bulkUpdate(p => ({ ...p, status: 'draft' }))} style="padding: 5px 12px; font-size: 11px; font-weight: 600; color: #fff; background: transparent; border: 1px solid #5f7a6b; border-radius: 4px; cursor: pointer; letter-spacing: 0.04em;">MARK DRAFT</button>
             <div style="height: 16px; width: 1px; background: #5f7a6b;"></div>
@@ -1070,10 +1073,10 @@
     const isDup = dupCount > 1;
 
     const stCls = (st) => ({
-      fg: status === st ? (st === 'rejected' ? '#fff' : (st === 'draft' ? '#fff' : '#1a4a3a')) : '#8a9188',
-      bg: status === st ? ({ draft: '#5a6470', scheduled: '#e8b04a', published: '#7dd3a4', rejected: '#c44545' }[st]) : 'transparent',
+      fg: status === st ? (st === 'scheduled' ? '#1a4a3a' : '#fff') : '#8a9188',
+      bg: status === st ? ({ next: '#3d5c8a', draft: '#5a6470', scheduled: '#e8b04a', published: '#7dd3a4', rejected: '#c44545' }[st]) : 'transparent',
     });
-    const sDraft = stCls('draft'), sSched = stCls('scheduled'), sPub = stCls('published'), sRej = stCls('rejected');
+    const sNext = stCls('next'), sDraft = stCls('draft'), sSched = stCls('scheduled'), sPub = stCls('published'), sRej = stCls('rejected');
 
     const titleRef = useRef(null);
     const onBlur = (e) => {
@@ -1130,6 +1133,7 @@
         </div>
         <div style="padding: 0 8px;">
           <div style="display: inline-flex; padding: 2px; background: #f5f3ec; border: 1px solid #dfd9c9; border-radius: 5px; gap: 1px;">
+            <button onClick=${() => updatePost(p.id, { status: 'next' })} style="padding: 4px 8px; font-size: 10px; font-weight: 700; color: ${sNext.fg}; background: ${sNext.bg}; border: none; border-radius: 3px; cursor: pointer; letter-spacing: 0.05em; font-family: 'JetBrains Mono', monospace;">NEXT</button>
             <button onClick=${() => updatePost(p.id, { status: 'draft' })} style="padding: 4px 8px; font-size: 10px; font-weight: 700; color: ${sDraft.fg}; background: ${sDraft.bg}; border: none; border-radius: 3px; cursor: pointer; letter-spacing: 0.05em; font-family: 'JetBrains Mono', monospace;">DRAFT</button>
             <button onClick=${() => updatePost(p.id, { status: 'scheduled' })} style="padding: 4px 8px; font-size: 10px; font-weight: 700; color: ${sSched.fg}; background: ${sSched.bg}; border: none; border-radius: 3px; cursor: pointer; letter-spacing: 0.05em; font-family: 'JetBrains Mono', monospace;">SCHED</button>
             <button onClick=${() => updatePost(p.id, { status: 'published' })} style="padding: 4px 8px; font-size: 10px; font-weight: 700; color: ${sPub.fg}; background: ${sPub.bg}; border: none; border-radius: 3px; cursor: pointer; letter-spacing: 0.05em; font-family: 'JetBrains Mono', monospace;">PUB</button>
