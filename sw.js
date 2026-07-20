@@ -1,11 +1,11 @@
 // Marcus Wise Content Tracker — service worker
 // Cache the app shell so the PWA works fully offline after first load.
 
-const CACHE_VERSION = 'mw-tracker-v1';
+const CACHE_VERSION = 'mw-tracker-v3';
 const APP_SHELL = [
   './',
   './index.html',
-  './app.js?v=1',
+  './app.js?v=3',
   './seed.json',
   './manifest.json',
   './icon.svg',

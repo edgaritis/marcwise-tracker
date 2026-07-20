@@ -23,17 +23,16 @@
   // ---------------- Constants ----------------
   const CATEGORIES = ['lists', 'howto', '3points', 'tweet', 'script', 'quote', 'maxims', 'question'];
   const CAT_COLORS = {
-    '3points':   { fg: '#3d7a5c', bg: '#eee8d8', border: '#c9dccc' },
-    'question':  { fg: '#7a3fbf', bg: '#f1eafa', border: '#dccaf2' },
+    'lists':     { fg: '#5a6470', bg: '#efece0', border: '#d3ccb8' },
     'howto':     { fg: '#2d7a4a', bg: '#e6f3eb', border: '#c5e2d0' },
-    'identity':  { fg: '#b03868', bg: '#fbe9f0', border: '#f3cadb' },
-    'list':      { fg: '#5a6470', bg: '#eef0f3', border: '#d3d8df' },
+    '3points':   { fg: '#1d6478', bg: '#e0eef3', border: '#bcd6e0' },
+    'tweet':     { fg: '#1d7ea6', bg: '#e0eff5', border: '#bcdae5' },
     'script':    { fg: '#c2682a', bg: '#fbeede', border: '#f2d4b0' },
-    'prompt':    { fg: '#1d7e88', bg: '#e1f3f5', border: '#bee2e6' },
     'quote':     { fg: '#4a4dbf', bg: '#ebebf9', border: '#cdcdee' },
-    'psychstory':{ fg: '#a83a4a', bg: '#fbe7ea', border: '#f1c6cd' },
+    'maxims':    { fg: '#7a3fbf', bg: '#f1eafa', border: '#dccaf2' },
+    'question':  { fg: '#a83a4a', bg: '#fbe7ea', border: '#f1c6cd' },
   };
-  function catColor(c) { return CAT_COLORS[c] || CAT_COLORS['3points']; }
+  function catColor(c) { return CAT_COLORS[c] || CAT_COLORS['lists']; }
 
   const STORAGE_KEY = 'mw_tracker_posts';
   const DEFAULTS_KEY = 'mw_tracker_defaults';
@@ -80,65 +79,88 @@
     return v;
   }
 
-  // ---------------- .md parser ----------------
-  function stripEmphasis(s) { return s.replace(/\*([^*]+)\*/g, '$1').replace(/\s+/g, ' ').trim(); }
-  function normalizeCategoryName(c) { c = c.toLowerCase(); if (c === 'howtos') return 'howto'; return c; }
+  // ---------------- .md parser (Marcus Wise card format) ----------------
+  // Each card:
+  //   category: X
+  //   preset: Y
+  //   [title: ...]    (optional; some categories don't have title)
+  //   [closer: ...]   (optional)
+  //   [attribution: ...] [source: ...]  (quote category)
+  //   caption: ...
+  //   <blank line>
+  //   body lines (any content)
+  //   ---   (card separator)
+  const CAT_NORM = { 'quotes': 'quote' };
+  function stripEmphasis(s) { return (s || '').replace(/\*+/g, '').replace(/\s+/g, ' ').trim(); }
+  function normalizeCategoryName(c) { c = (c || '').toLowerCase(); return CAT_NORM[c] || c; }
   function inferFormatFromFilename(name) {
     const n = (name || '').toLowerCase();
-    if (n.includes('reels') || n.includes('_reels_')) return 'reels';
-    if (n.includes('image-posts') || n.includes('_image_')) return 'image';
-    return 'image';
+    if (n.includes('reels')) return { image: false, reels: true };
+    if (n.includes('image')) return { image: true, reels: false };
+    if (n.includes('tweet')) return { image: true, reels: false };
+    return { image: true, reels: false };
   }
-  function parseBlocks(txt) {
-    const lines = txt.split(/\r?\n/);
-    const blocks = [];
-    let cur = null;
+  function splitCardsMW(text) {
+    return text.split(/^---\s*$/m).map(x => x.trim()).filter(x => x.length > 0);
+  }
+  function parseCardMW(cardText) {
+    const lines = cardText.split('\n');
+    const meta = {};
+    let bodyStart = 0;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      const open = line.match(/^:::\s+(\w+)\s*$/);
-      if (open && !cur) { cur = { type: open[1].toLowerCase(), raw: [] }; continue; }
-      if (cur) {
-        if (line.trim() === ':::') { blocks.push(cur); cur = null; continue; }
-        cur.raw.push(line);
+      if (line.trim() === '') { bodyStart = i + 1; break; }
+      const m = line.match(/^([a-z_]+):\s*(.*)$/i);
+      if (m && ['category','preset','title','closer','caption','attribution','source','teaser'].includes(m[1].toLowerCase())) {
+        meta[m[1].toLowerCase()] = m[2].trim();
+      } else {
+        bodyStart = i; break;
       }
     }
-    return blocks;
-  }
-  function extractTitleFromBlock(block) {
-    for (let i = 0; i < block.raw.length; i++) {
-      const m = block.raw[i].match(/^\s*title:\s*(.*)$/);
-      if (m) {
-        const v = m[1].trim();
-        if (v) return v;
-        // Empty title — try first non-empty body line.
-        const bIdx = block.raw.findIndex((l, j) => j > i && /^\s*body:\s*<<<\s*$/.test(l));
-        if (bIdx !== -1) {
-          for (let k = bIdx + 1; k < block.raw.length; k++) {
-            const l = block.raw[k];
-            if (/^\s*>>>\s*$/.test(l)) break;
-            const t = l.trim();
-            if (t) {
-              const clean = t.replace(/^\d+\.\s*/, '').replace(/\*\*/g, '').trim();
-              return clean.length > 80 ? clean.slice(0, 77) + '…' : clean;
-            }
-          }
-        }
-        return '';
-      }
+    if (!meta.category) return null;
+    const body = lines.slice(bodyStart).join('\n').trim();
+    let title = meta.title || '';
+    if (!title) title = meta.caption || '';
+    if (!title) {
+      const firstLine = (body.split('\n').find(l => l.trim().length > 0) || '').trim();
+      title = firstLine;
     }
-    return '';
+    // For titles derived from caption: strip hashtags.
+    title = title.replace(/#\S+/g, '').replace(/\s+/g, ' ').trim();
+    title = stripEmphasis(title);
+    return {
+      category: normalizeCategoryName(meta.category),
+      title: title.substring(0, 200),
+      body: body.substring(0, 4000),
+      caption: meta.caption || '',
+      closer: meta.closer || '',
+      attribution: meta.attribution || '',
+      sourceRef: meta.source || '',
+      preset: meta.preset || '',
+    };
   }
   function parseMdFiles(files) {
     // files: array of {name, text}. Returns array of seed-shape objects.
     const out = [];
     for (const f of files) {
       const fmt = inferFormatFromFilename(f.name);
-      const blocks = parseBlocks(f.text);
-      for (const b of blocks) {
-        const category = normalizeCategoryName(b.type);
-        const title = stripEmphasis(extractTitleFromBlock(b));
-        if (!title) continue;
-        out.push({ category, title, format: fmt, source: f.name });
+      const cards = splitCardsMW(f.text);
+      for (const cardText of cards) {
+        const p = parseCardMW(cardText);
+        if (!p) continue;
+        if (!p.title) continue;
+        out.push({
+          category: p.category,
+          title: p.title,
+          body: p.body,
+          caption: p.caption,
+          closer: p.closer,
+          attribution: p.attribution,
+          sourceRef: p.sourceRef,
+          preset: p.preset,
+          formats: fmt,
+          source: f.name,
+        });
       }
     }
     return out;
@@ -188,6 +210,9 @@
     const [viewName, setViewName] = useState('');
     const [mdPreview, setMdPreview] = useState(null);
     const [dragActive, setDragActive] = useState(false);
+    const [detailId, setDetailId] = useState(null);
+    const openDetail = useCallback((id) => setDetailId(id), []);
+    const closeDetail = useCallback(() => setDetailId(null), []);
 
     // ---- Cloud sync state ----
     const [auth, setAuth] = useState({ status: 'loading', user: null });
@@ -634,7 +659,7 @@
       };
     };
     const openNew = () => {
-      const seeded = defaultsToForm('3points', { category: '3points', title: '', image: true, reels: false, page: true, group: false });
+      const seeded = defaultsToForm('lists', { category: 'lists', title: '', image: true, reels: false, page: true, group: false });
       setNewForm({ ...seeded, title: '' });
       setModal('new');
       setTimeout(() => { const el = document.getElementById('ct_new_title'); if (el) el.focus(); }, 30);
@@ -793,14 +818,23 @@
       const now = Date.now();
       const newPosts = additions.map((s, i) => {
         const d = defaults[s.category] || {};
-        const formats = d.formats || (d.format ? { image: d.format === 'image', reels: d.format === 'reels' } : { image: s.format === 'image', reels: s.format === 'reels' });
+        const parsedFormats = s.formats || { image: false, reels: false };
+        const formats = d.formats || (d.format ? { image: d.format === 'image', reels: d.format === 'reels' } : parsedFormats);
         return {
           id: 'p_md_' + now + '_' + i,
           category: s.category,
           title: s.title,
+          body: s.body || '',
+          caption: s.caption || '',
+          closer: s.closer || '',
+          attribution: s.attribution || '',
+          sourceRef: s.sourceRef || '',
+          preset: s.preset || '',
           formats: { image: !!formats.image, reels: !!formats.reels },
           destinations: { page: !!d.page, group: !!d.group },
           status: 'draft',
+          pinned: false,
+          starred: false,
           source: s.source,
         };
       });
@@ -817,6 +851,7 @@
         const inField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
         if (e.key === 'Escape') {
           if (inField) { t.blur(); return; }
+          if (detailId) { setDetailId(null); return; }
           if (modal) { setModal(null); return; }
           if (search) { setSearch(''); setPage(0); return; }
           return;
@@ -842,6 +877,7 @@
       ${DefaultsModal({ open: modal === 'defaults', close: () => setModal(null), defaults, setDefault, applyToDrafts: applyDefaultsToDrafts })}
       ${SaveViewModal({ open: modal === 'saveView', close: () => setModal(null), name: viewName, setName: setViewName, submit: saveView })}
       ${HelpModal({ open: modal === 'help', close: () => setModal(null) })}
+      ${DetailDrawer({ open: !!detailId, post: posts.find(p => p.id === detailId), close: closeDetail, updatePost, togglePin, toggleStar })}
       ${ImportMdModal({ open: modal === 'importMd', close: () => { setModal(null); setMdPreview(null); }, preview: mdPreview, onFiles: readMdFiles, confirm: confirmImportMd, dragActive, setDragActive })}
 
       <div class="ct_app" style="min-height: 100vh; padding: 28px 32px 80px; max-width: 1640px; margin: 0 auto;">
@@ -1006,7 +1042,7 @@
 
         <!-- Table -->
         <div style="background: #fff; border: 1px solid #dfd9c9; border-radius: 0 0 8px 8px; overflow: hidden;">
-          <div class="ct_table_header" style="display: grid; grid-template-columns: 44px 52px 56px 150px minmax(260px, 460px) 110px 150px 220px 50px 1fr; align-items: center; padding: 0 4px; background: #f5f3ec; border-bottom: 1px solid #dfd9c9; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600; letter-spacing: 0.12em; color: #5f7a6b; text-transform: uppercase; height: 38px;">
+          <div class="ct_table_header" style="display: grid; grid-template-columns: 44px 52px 56px 150px minmax(260px, 460px) 110px 150px 220px 68px 1fr; align-items: center; padding: 0 4px; background: #f5f3ec; border-bottom: 1px solid #dfd9c9; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600; letter-spacing: 0.12em; color: #5f7a6b; text-transform: uppercase; height: 38px;">
             <div style="display: flex; justify-content: center;">
               <input type="checkbox" checked=${visible.length  > 0 && visible.every(p => selected[p.id])} onChange=${toggleSelectAll} style="cursor: pointer; width: 14px; height: 14px; accent-color: #1a4a3a;" />
             </div>
@@ -1029,7 +1065,7 @@
             </div>
           ` : null}
 
-          ${visible.map((p, i) => Row({ p, index: start + i, dupMap, selected, setSelected, updatePost, removePost, togglePin, toggleStar }))}
+          ${visible.map((p, i) => Row({ p, index: start + i, dupMap, selected, setSelected, updatePost, removePost, togglePin, toggleStar, openDetail }))}
         </div>
 
         <div class="ct_footer" style="display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 14px; padding: 0 4px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #5f7a6b; letter-spacing: 0.08em; text-transform: uppercase;">
@@ -1062,7 +1098,7 @@
   }
 
   // ---------------- Row component ----------------
-  function Row({ p, index, dupMap, selected, setSelected, updatePost, removePost, togglePin, toggleStar }) {
+  function Row({ p, index, dupMap, selected, setSelected, updatePost, removePost, togglePin, toggleStar, openDetail }) {
     const cat = catColor(p.category);
     const isSel = !!selected[p.id];
     const f = p.formats || {};
@@ -1085,7 +1121,7 @@
     };
 
     return html`
-      <div class=${'row ct_row ' + (isSel ? 'selected' : '')} style="display: grid; grid-template-columns: 44px 52px 56px 150px minmax(260px, 460px) 110px 150px 220px 50px 1fr; align-items: center; padding: 0 4px; border-bottom: 1px solid #eeeade; min-height: 56px; border-left: ${p.pinned ? '3px solid #e8b04a' : '3px solid transparent'};">
+      <div class=${'row ct_row ' + (isSel ? 'selected' : '')} style="display: grid; grid-template-columns: 44px 52px 56px 150px minmax(260px, 460px) 110px 150px 220px 68px 1fr; align-items: center; padding: 0 4px; border-bottom: 1px solid #eeeade; min-height: 56px; border-left: ${p.pinned ? '3px solid #e8b04a' : '3px solid transparent'};">
         <div style="display: flex; justify-content: center;">
           <input type="checkbox" checked=${isSel} onChange=${() => setSelected(s => { const c = { ...s }; if (c[p.id]) delete c[p.id]; else c[p.id] = true; return c; })} style="cursor: pointer; width: 14px; height: 14px; accent-color: #1a4a3a;" />
         </div>
@@ -1140,7 +1176,10 @@
             <button onClick=${() => updatePost(p.id, { status: 'rejected' })} style="padding: 4px 8px; font-size: 10px; font-weight: 700; color: ${sRej.fg}; background: ${sRej.bg}; border: none; border-radius: 3px; cursor: pointer; letter-spacing: 0.05em; font-family: 'JetBrains Mono', monospace;">REJ</button>
           </div>
         </div>
-        <div style="display: flex; justify-content: center;">
+        <div style="display: flex; justify-content: center; align-items: center; gap: 2px;">
+          <button onClick=${() => openDetail(p.id)} title="View full details" style="display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; color: #5f7a6b; background: transparent; border: none; border-radius: 4px; cursor: pointer;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
           <button onClick=${() => removePost(p.id)} title="Delete post" style="display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; color: #a5b0a5; background: transparent; border: none; border-radius: 4px; cursor: pointer;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
           </button>
@@ -1328,6 +1367,147 @@
         <button onClick=${applyToDrafts} style="padding: 8px 18px; font-size: 12px; font-weight: 700; color: #fff; background: #1a4a3a; border: none; border-radius: 5px; cursor: pointer; letter-spacing: 0.03em;">Apply to all drafts</button>
       </div>
     ` });
+  }
+
+  function DetailDrawer({ open, post, close, updatePost, togglePin, toggleStar }) {
+    if (!open || !post) return null;
+    const cat = catColor(post.category);
+    const status = post.status || 'draft';
+    const statusMap = { next: { bg: '#3d5c8a', fg: '#fff', label: 'NEXT' }, draft: { bg: '#5a6470', fg: '#fff', label: 'DRAFT' }, scheduled: { bg: '#e8b04a', fg: '#1a4a3a', label: 'SCHEDULED' }, published: { bg: '#7dd3a4', fg: '#1a4a3a', label: 'PUBLISHED' }, rejected: { bg: '#c44545', fg: '#fff', label: 'REJECTED' } };
+    const st = statusMap[status] || statusMap.draft;
+    const copy = (text, label) => {
+      if (!text) return;
+      try {
+        navigator.clipboard.writeText(text);
+        const el = document.getElementById('ct_copy_toast');
+        if (el) { el.textContent = 'Copied ' + label; el.style.opacity = '1'; setTimeout(() => { el.style.opacity = '0'; }, 1400); }
+      } catch (e) { alert('Copy failed. Select the text and copy manually.'); }
+    };
+    const hashtags = (post.caption || '').match(/#\S+/g) || [];
+    const captionNoTags = (post.caption || '').replace(/#\S+/g, '').replace(/\s+/g, ' ').trim();
+    const fullAssembled = [
+      post.title ? post.title : '',
+      post.body ? post.body : '',
+      post.closer ? '\n' + post.closer : '',
+      post.attribution ? '\n— ' + post.attribution + (post.sourceRef ? ', ' + post.sourceRef : '') : '',
+      post.caption ? '\n\n' + post.caption : '',
+    ].filter(Boolean).join('\n').trim();
+
+    const kvLabel = 'font-family: \'JetBrains Mono\', monospace; font-size: 10px; font-weight: 600; letter-spacing: 0.12em; color: #5f7a6b; text-transform: uppercase; margin-bottom: 6px;';
+    const contentBox = 'padding: 12px 14px; background: #f5f3ec; border: 1px solid #dfd9c9; border-radius: 6px; font-size: 13px; color: #1a4a3a; line-height: 1.55; white-space: pre-wrap; word-break: break-word;';
+    const copyBtn = 'display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: #1a4a3a; background: #efece0; border: 1px solid #d3ccb8; border-radius: 4px; cursor: pointer; font-family: \'JetBrains Mono\', monospace;';
+
+    return html`
+      <div class="ct_backdrop" onClick=${close} style="position: fixed; inset: 0; background: rgba(13, 35, 64, 0.35); z-index: 60;"></div>
+      <div class="ct_modal" role="dialog" aria-modal="true" style="position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100vw); background: #fff; box-shadow: -8px 0 24px rgba(0,0,0,0.12); z-index: 61; display: flex; flex-direction: column;">
+        <!-- Header -->
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid #dfd9c9; background: #f5f3ec;">
+          <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
+            <span style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: ${cat.fg}; background: ${cat.bg}; border: 1px solid ${cat.border}; border-radius: 4px; font-family: 'JetBrains Mono', monospace;">
+              <span style="width: 5px; height: 5px; border-radius: 50%; background: ${cat.fg};"></span>${post.category}
+            </span>
+            <span style="display: inline-flex; align-items: center; padding: 3px 10px; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: ${st.fg}; background: ${st.bg}; border-radius: 4px; font-family: 'JetBrains Mono', monospace;">${st.label}</span>
+          </div>
+          <button onClick=${close} title="Close (Esc)" style="display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; color: #5f7a6b; background: transparent; border: none; border-radius: 4px; cursor: pointer;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+
+        <!-- Scrollable body -->
+        <div style="flex: 1; overflow-y: auto; padding: 18px 20px 24px;">
+          <!-- Title -->
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 22px;">
+            <h2 style="margin: 0; font-size: 18px; font-weight: 700; color: #1a4a3a; line-height: 1.35; flex: 1; min-width: 0;">${post.title || '(untitled)'}</h2>
+            <div style="display: flex; align-items: center; gap: 4px;">
+              <button onClick=${() => togglePin(post.id)} title="Pin as Next Up" style="display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; background: transparent; border: none; border-radius: 4px; cursor: pointer; color: ${post.pinned ? '#c2682a' : '#d2ccb8'};">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill=${post.pinned ? '#c2682a' : 'none'} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
+              </button>
+              <button onClick=${() => toggleStar(post.id)} title="Star (shortlist)" style="display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; background: transparent; border: none; border-radius: 4px; cursor: pointer; color: ${post.starred ? '#e8b04a' : '#d2ccb8'};">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill=${post.starred ? '#e8b04a' : 'none'} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Quick actions -->
+          <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 22px;">
+            <button onClick=${() => copy(fullAssembled, 'full post')} style="${copyBtn}">📋 COPY FULL POST</button>
+            ${post.caption ? html`<button onClick=${() => copy(post.caption, 'caption')} style="${copyBtn}">COPY CAPTION</button>` : null}
+            ${post.body ? html`<button onClick=${() => copy(post.body, 'body')} style="${copyBtn}">COPY BODY</button>` : null}
+            ${hashtags.length > 0 ? html`<button onClick=${() => copy(hashtags.join(' '), 'hashtags')} style="${copyBtn}">COPY HASHTAGS</button>` : null}
+          </div>
+
+          <!-- Body -->
+          ${post.body ? html`
+            <div style="margin-bottom: 22px;">
+              <div style="${kvLabel}">Body</div>
+              <div style="${contentBox}">${post.body}</div>
+            </div>
+          ` : null}
+
+          <!-- Closer -->
+          ${post.closer ? html`
+            <div style="margin-bottom: 22px;">
+              <div style="${kvLabel}">Closer</div>
+              <div style="${contentBox} font-style: italic;">${post.closer}</div>
+            </div>
+          ` : null}
+
+          <!-- Attribution -->
+          ${(post.attribution || post.sourceRef) ? html`
+            <div style="margin-bottom: 22px;">
+              <div style="${kvLabel}">Attribution</div>
+              <div style="${contentBox}">— ${post.attribution || ''}${post.sourceRef ? ', ' + post.sourceRef : ''}</div>
+            </div>
+          ` : null}
+
+          <!-- Caption -->
+          ${post.caption ? html`
+            <div style="margin-bottom: 22px;">
+              <div style="${kvLabel}">Caption <span style="color: #a5b0a5; font-weight: 400; letter-spacing: 0.02em; text-transform: none;">(social copy)</span></div>
+              <div style="${contentBox}">${captionNoTags}</div>
+              ${hashtags.length > 0 ? html`
+                <div style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px;">
+                  ${hashtags.map(h => html`<span style="display: inline-block; padding: 2px 8px; font-size: 11px; font-family: 'JetBrains Mono', monospace; color: #3d7a5c; background: #eee8d8; border: 1px solid #c9dccc; border-radius: 3px;">${h}</span>`)}
+                </div>
+              ` : null}
+            </div>
+          ` : null}
+
+          <!-- Meta -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 22px;">
+            <div>
+              <div style="${kvLabel}">Formats</div>
+              <div style="font-size: 12px; color: #1a4a3a;">${(post.formats || {}).image ? '🖼 Image' : ''}${((post.formats || {}).image && (post.formats || {}).reels) ? ' · ' : ''}${(post.formats || {}).reels ? '🎬 Reels' : ''}${!((post.formats || {}).image || (post.formats || {}).reels) ? '—' : ''}</div>
+            </div>
+            <div>
+              <div style="${kvLabel}">Destinations</div>
+              <div style="font-size: 12px; color: #1a4a3a;">${(post.destinations || {}).page ? 'FB Page' : ''}${((post.destinations || {}).page && (post.destinations || {}).group) ? ' · ' : ''}${(post.destinations || {}).group ? 'FB Group' : ''}${!((post.destinations || {}).page || (post.destinations || {}).group) ? '—' : ''}</div>
+            </div>
+            ${post.preset ? html`
+              <div>
+                <div style="${kvLabel}">Preset</div>
+                <div style="font-size: 12px; color: #1a4a3a; font-family: 'JetBrains Mono', monospace;">${post.preset}</div>
+              </div>
+            ` : null}
+            <div>
+              <div style="${kvLabel}">Source file</div>
+              <div style="font-size: 11px; color: #5f7a6b; font-family: 'JetBrains Mono', monospace; word-break: break-all;">${post.source || '—'}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer: status quick-toggle -->
+        <div style="border-top: 1px solid #dfd9c9; padding: 12px 18px; background: #f5f3ec; display: flex; align-items: center; gap: 8px;">
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; letter-spacing: 0.12em; color: #5f7a6b; text-transform: uppercase; margin-right: 4px;">Status</span>
+          ${['next','draft','scheduled','published','rejected'].map(k => html`
+            <button onClick=${() => updatePost(post.id, { status: k })} style="padding: 5px 10px; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; color: ${status === k ? statusMap[k].fg : '#8a9188'}; background: ${status === k ? statusMap[k].bg : 'transparent'}; border: 1px solid ${status === k ? statusMap[k].bg : '#dfd9c9'}; border-radius: 4px; cursor: pointer; font-family: 'JetBrains Mono', monospace; text-transform: uppercase;">${statusMap[k].label}</button>
+          `)}
+        </div>
+
+        <!-- Copy-toast -->
+        <div id="ct_copy_toast" style="position: absolute; bottom: 74px; left: 50%; transform: translateX(-50%); padding: 8px 14px; background: #1a4a3a; color: #fff; font-size: 12px; font-weight: 600; border-radius: 6px; opacity: 0; transition: opacity 0.18s; pointer-events: none;"></div>
+      </div>
+    `;
   }
 
   function SaveViewModal({ open, close, name, setName, submit }) {
