@@ -120,12 +120,13 @@
     }
     if (!meta.category) return null;
     const body = lines.slice(bodyStart).join('\n').trim();
+    const firstBodyLine = (body.split('\n').find(l => l.trim().length > 0) || '').trim();
+    // Title priority: explicit title > first body line (the real hook) > caption.
+    // Body-first beats caption because captions are generic CTAs ("Tag someone who
+    // does this.") that repeat across cards and cause false-duplicate collisions.
     let title = meta.title || '';
+    if (!title) title = firstBodyLine;
     if (!title) title = meta.caption || '';
-    if (!title) {
-      const firstLine = (body.split('\n').find(l => l.trim().length > 0) || '').trim();
-      title = firstLine;
-    }
     // For titles derived from caption: strip hashtags.
     title = title.replace(/#\S+/g, '').replace(/\s+/g, ' ').trim();
     title = stripEmphasis(title);
